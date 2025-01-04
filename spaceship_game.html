@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Retro-Futuristic Spaceship Battle</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: Arial, sans-serif;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden; /* Hide scroll bars */
+    }
+    #gameCanvas {
+      background: #000; /* The canvas itself is black for a space vibe */
+      display: block;
+      margin: 0 auto;
+      border: 2px solid #333;
+    }
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      color: #fff;
+      font-size: 24px;
+      pointer-events: none;
+    }
+    #gameOverScreen {
+      position: absolute;
+      top: 40%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      padding: 2em;
+      border: 2px solid #ff007f;
+      display: none;
+    }
+    #restartButton {
+      background: #ff007f;
+      border: none;
+      padding: 0.5em 1em;
+      margin-top: 1em;
+      cursor: pointer;
+      font-size: 20px;
+      color: #fff;
+    }
+    #restartButton:hover {
+      background: #ff3399;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <span id="scoreDisplay">Score: 0</span>
+  </div>
+  <div id="gameOverScreen">
+    <h2>Game Over</h2>
+    <p id="finalScore">Your Score: 0</p>
+    <button id="restartButton">Restart (R)</button>
+  </div>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const scoreDisplay = document.getElementById("scoreDisplay");
+    const gameOverScreen = document.getElementById("gameOverScreen");
+    const finalScore = document.getElementById("finalScore");
+    const restartButton = document.getElementById("restartButton");
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+
+    // ----- GAME SETTINGS -----
+    let gameRunning = true;
+    let score = 0;
+
+    // Player (spaceship) properties
+    const playerSize = 20;
+    const playerSpeed = 5;
+    let playerX = cw / 2 - playerSize / 2;
+    let playerY = ch / 2 - playerSize / 2;
+
+    // Movement flags
+    let moveLeft = false;
+    let moveRight = false;
+    let moveUp = false;
+    let moveDown = false;
+
+    // Pink enemies
+    const pinkEnemies = [];
+    const pinkEnemySize = 15;
+    let pinkSpeed = 2; // Initial speed of pink enemies; will gradually increase
+
+    // Red enemy
+    const redEnemies = [];
+    const redEnemySize = 25;
+    let redSpeed = 3;
+
+    // Generate star field for background
+    const stars = [];
+    const totalStars = 60;
+    for (let i = 0; i < totalStars; i++) {
+      stars.push({
+        x: Math.random() * cw,
+        y: Math.random() * ch,
+        radius: Math.random() * 2,
+        speed: 0.2 + Math.random() * 0.3 // Speed of "twinkle"
+      });
+    }
+
+    // Spawning intervals
+    let pinkSpawnInterval;
+    let redSpawnInterval;
+    let speedIncreaseInterval;
+
+    // ----- EVENT LISTENERS -----
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "a") moveLeft = true;
+      if (e.key === "ArrowRight" || e.key === "d") moveRight = true;
+      if (e.key === "ArrowUp" || e.key === "w") moveUp = true;
+      if (e.key === "ArrowDown" || e.key === "s") moveDown = true;
+      
+      // Restart on R if game is over
+      if (!gameRunning && (e.key === "r" || e.key === "R")) {
+        resetGame();
+      }
+    });
+
+    document.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "a") moveLeft = false;
+      if (e.key === "ArrowRight" || e.key === "d") moveRight = false;
+      if (e.key === "ArrowUp" || e.key === "w") moveUp = false;
+      if (e.key === "ArrowDown" || e.key === "s") moveDown = false;
+    });
+
+    restartButton.addEventListener("click", () => {
+      if (!gameRunning) {
+        resetGame();
+      }
+    });
+
+    // ----- GAME LOGIC -----
+
+    function spawnPinkEnemy() {
+      // Pink enemies drop from the top to the bottom
+      const x = Math.random() * (cw - pinkEnemySize);
+      pinkEnemies.push({ x: x, y: -pinkEnemySize });
+    }
+
+    function spawnRedEnemy() {
+      // Red enemies appear from left side (for variety)
+      const y = Math.random() * (ch - redEnemySize);
+      redEnemies.push({ x: -redEnemySize, y: y });
+    }
+
+    function update() {
+      if (!gameRunning) return;
+
+      // Move player
+      if (moveLeft && playerX > 0) playerX -= playerSpeed;
+      if (moveRight && playerX < cw - playerSize) playerX += playerSpeed;
+      if (moveUp && playerY > 0) playerY -= playerSpeed;
+      if (moveDown && playerY < ch - playerSize) playerY += playerSpeed;
+
+      // Move pink enemies down
+      for (let i = pinkEnemies.length - 1; i >= 0; i--) {
+        pinkEnemies[i].y += pinkSpeed;
+        // Remove if out of canvas
+        if (pinkEnemies[i].y > ch) {
+          pinkEnemies.splice(i, 1);
+        }
+      }
+
+      // Move red enemies to the right
+      for (let i = redEnemies.length - 1; i >= 0; i--) {
+        redEnemies[i].x += redSpeed;
+        // Remove if out of canvas
+        if (redEnemies[i].x > cw) {
+          redEnemies.splice(i, 1);
+        }
+      }
+
+      // Check collision with pink enemies
+      pinkEnemies.forEach((enemy) => {
+        if (isColliding(playerX, playerY, playerSize, enemy.x, enemy.y, pinkEnemySize)) {
+          // (Optional) losing points or something else if pink hits you
+          // For now, do nothing except it stays dangerous
+          // You could reduce score or lives, etc.
+        }
+      });
+
+      // Check collision with red enemies -> game over
+      redEnemies.forEach((enemy) => {
+        if (isColliding(playerX, playerY, playerSize, enemy.x, enemy.y, redEnemySize)) {
+          endGame();
+        }
+      });
+
+      // Increase score over time
+      score += 1;
+      scoreDisplay.textContent = `Score: ${score}`;
+
+      draw();
+      requestAnimationFrame(update);
+    }
+
+    function draw() {
+      // Clear canvas
+      ctx.clearRect(0, 0, cw, ch);
+
+      // Draw star field (background)
+      drawStars();
+
+      // Draw pink enemies
+      ctx.fillStyle = "#ff6ffc";
+      pinkEnemies.forEach((enemy) => {
+        ctx.fillRect(enemy.x, enemy.y, pinkEnemySize, pinkEnemySize);
+      });
+
+      // Draw red enemies
+      ctx.fillStyle = "#ff0000";
+      redEnemies.forEach((enemy) => {
+        ctx.fillRect(enemy.x, enemy.y, redEnemySize, redEnemySize);
+      });
+
+      // Draw player (spaceship)
+      ctx.fillStyle = "#00ffcc";
+      ctx.fillRect(playerX, playerY, playerSize, playerSize);
+    }
+
+    function drawStars() {
+      ctx.save();
+      // Very subtle "orbit" effect: rotate the entire canvas slightly
+      // to give a sense of cosmic movement
+      ctx.translate(cw / 2, ch / 2);
+      ctx.rotate((score / 10000) * Math.PI);
+      ctx.translate(-cw / 2, -ch / 2);
+
+      // Draw each star
+      stars.forEach((star) => {
+        // Twinkle effect
+        star.radius += star.speed * (Math.random() > 0.5 ? 1 : -1);
+        if (star.radius < 0) star.radius = 0.5;
+        if (star.radius > 3) star.radius = 2;
+
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.radius, 0, 2 * Math.PI);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+      });
+
+      ctx.restore();
+    }
+
+    function isColliding(x1, y1, size1, x2, y2, size2) {
+      return !(
+        x1 + size1 < x2 ||
+        x1 > x2 + size2 ||
+        y1 + size1 < y2 ||
+        y1 > y2 + size2
+      );
+    }
+
+    function endGame() {
+      gameRunning = false;
+      gameOverScreen.style.display = "block";
+      finalScore.textContent = `Your Score: ${score}`;
+      clearInterval(pinkSpawnInterval);
+      clearInterval(redSpawnInterval);
+      clearInterval(speedIncreaseInterval);
+    }
+
+    function resetGame() {
+      // Clear arrays
+      pinkEnemies.length = 0;
+      redEnemies.length = 0;
+      // Reset player position
+      playerX = cw / 2 - playerSize / 2;
+      playerY = ch / 2 - playerSize / 2;
+      // Reset score
+      score = 0;
+      // Reset speed
+      pinkSpeed = 2;
+      redSpeed = 3;
+      // Hide game over
+      gameOverScreen.style.display = "none";
+      gameRunning = true;
+      scoreDisplay.textContent = `Score: 0`;
+
+      // Restart intervals
+      pinkSpawnInterval = setInterval(spawnPinkEnemy, 800);
+      redSpawnInterval = setInterval(spawnRedEnemy, 4000);
+      speedIncreaseInterval = setInterval(() => {
+        pinkSpeed += 0.1; // Gradually increase pink enemies speed
+      }, 2000);
+
+      // Start loop
+      update();
+    }
+
+    // ----- INITIALIZE GAME -----
+    resetGame();
+  </script>
+</body>
+</html>
