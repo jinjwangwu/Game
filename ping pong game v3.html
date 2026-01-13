@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Table Tennis (Pong) — Single File</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --panel: rgba(255,255,255,.03);
+      --border: #263248;
+      --border2: #2d3c59;
+      --text: #e8eefc;
+    }
+    html, body { height: 100%; margin: 0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .wrap { min-height: 100%; display:flex; align-items:center; justify-content:center; padding: 18px; box-sizing:border-box; }
+    .panel { display:flex; flex-direction:column; gap:10px; align-items:center; width: min(980px, 96vw); }
+    canvas { width: min(900px, 96vw); height: auto; border: 2px solid var(--border); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+
+    .topbar, .bottombar {
+      width: min(900px, 96vw);
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+      font-size: 14px; opacity:.95; flex-wrap: wrap;
+    }
+    .left, .right { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+    .pill { padding: 6px 10px; border:1px solid var(--border); border-radius:999px; background: var(--panel); }
+    .btn {
+      cursor:pointer; user-select:none;
+      padding: 8px 12px; border:1px solid var(--border2); border-radius:10px;
+      background: rgba(90,120,255,.14); color:var(--text);
+    }
+    .btn:hover { background: rgba(90,120,255,.22); }
+    .btn:active { transform: translateY(1px); }
+    kbd { border:1px solid var(--border2); border-bottom-width:2px; border-radius:8px; padding:2px 6px; background: rgba(255,255,255,.04); }
+
+    select, input[type="number"]{
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      padding: 7px 10px;
+      outline: none;
+    }
+    input[type="number"]{ width: 90px; }
+    label { display:flex; gap:8px; align-items:center; }
+    .msg { width: min(900px, 96vw); text-align:center; }
+
+    .scoreline {
+      width: min(900px, 96vw);
+      display:flex; justify-content:space-between; align-items:center;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255,255,255,.03);
+      padding: 10px 12px;
+      box-sizing: border-box;
+    }
+    .scoreline .s { font-weight: 650; }
+    .scoreline .mid { opacity:.75; font-size: 12px; text-align:center; flex: 1; }
+    .scoreline .side { width: 140px; display:flex; justify-content:center; }
+    @media (max-width: 560px) {
+      .scoreline .side { width: 110px; }
+      input[type="number"]{ width: 80px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <div class="topbar">
+        <div class="left">
+          <div class="pill">
+            Controls: <kbd>↑</kbd>/<kbd>↓</kbd> (or <kbd>W</kbd>/<kbd>S</kbd>) • <kbd>Space</kbd> serve/pause • <kbd>R</kbd> reset
+          </div>
+        </div>
+        <div class="right">
+          <label class="pill" title="CPU strength">
+            Difficulty
+            <select id="difficulty">
+              <option value="easy">Easy</option>
+              <option value="normal" selected>Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+
+          <label class="pill" title="Points needed to win">
+            Play to
+            <input id="winPoints" type="number" min="1" max="99" step="1" value="7" />
+          </label>
+
+          <div class="btn" id="apply">Apply</div>
+          <div class="btn" id="toggle">Pause</div>
+        </div>
+      </div>
+
+      <canvas id="game" width="900" height="520"></canvas>
+
+      <div class="pill msg" id="msg">Press <kbd>Space</kbd> to serve.</div>
+
+      <!-- Bottom score area -->
+      <div class="scoreline" aria-label="Scores">
+        <div class="side"><span class="s" id="youScore">You: 0</span></div>
+        <div class="mid" id="status">First to 7 wins</div>
+        <div class="side"><span class="s" id="cpuScore">CPU: 0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ====== Single-file Table Tennis (Pong) with difficulty + custom win points ======
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    const UI = {
+      difficulty: document.getElementById("difficulty"),
+      winPoints: document.getElementById("winPoints"),
+      apply: document.getElementById("apply"),
+      toggle: document.getElementById("toggle"),
+      msg: document.getElementById("msg"),
+      youScore: document.getElementById("youScore"),
+      cpuScore: document.getElementById("cpuScore"),
+      status: document.getElementById("status"),
+    };
+
+    const W = canvas.width, H = canvas.height;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+    // Colors requested:
+    const COLORS = {
+      field: "#1a8f3a",     // green playground
+      paddle: "#ffd400",    // yellow paddles
+      ball: "#ffffff",      // white ball
+      lines: "rgba(255,255,255,0.45)"
+    };
+
+    // Background image (drawn onto canvas)
+    const BG_URL = "https://raw.githubusercontent.com/https-deeplearning-ai/lc-build-with-andrew-platform/main/img/tabletennis43.jpg";
+    const bgImg = new Image();
+    bgImg.crossOrigin = "anonymous";
+    let bgReady = false;
+    bgImg.onload = () => { bgReady = true; };
+    bgImg.onerror = () => { bgReady = false; };
+    bgImg.src = BG_URL;
+
+    // Delta cap for stability
+    const DT_CAP = 1 / 30;
+
+    // Core objects
+    const state = {
+      running: true,
+      awaitingServe: true,
+      lastTime: performance.now(),
+      keys: new Set(),
+      you: { score: 0 },
+      cpu: { score: 0 },
+      winScore: 7,
+      serveDir: 1,
+    };
+
+    const paddle = { w: 14, h: 110, margin: 24, speed: 560 };
+
+    const ballCfg = {
+      r: 9,
+      baseSpeed: 520,
+      maxSpeed: 920,
+      accelPerHit: 26,
+      spinFactor: 320,
+    };
+
+    const youPaddle = { x: paddle.margin, y: (H - paddle.h) / 2, vy: 0, lastY: 0 };
+
+    const cpuPaddle = {
+      x: W - paddle.margin - paddle.w,
+      y: (H - paddle.h) / 2,
+      vy: 0,
+      lastY: 0,
+      reaction: 0.18,
+      maxSpeed: 520,
+      jitter: 0.0,
+      aimBias: 0.12,
+    };
+
+    const ball = { x: W / 2, y: H / 2, vx: 0, vy: 0, speed: ballCfg.baseSpeed };
+
+    function setDifficulty(level) {
+      const presets = {
+        easy:   { reaction: 0.28, maxSpeed: 420, aimBias: 0.26, jitter: 26 },
+        normal: { reaction: 0.18, maxSpeed: 520, aimBias: 0.12, jitter: 10 },
+        hard:   { reaction: 0.10, maxSpeed: 650, aimBias: 0.04, jitter: 2  },
+      };
+      const p = presets[level] || presets.normal;
+      cpuPaddle.reaction = p.reaction;
+      cpuPaddle.maxSpeed = p.maxSpeed;
+      cpuPaddle.aimBias = p.aimBias;
+      cpuPaddle.jitter = p.jitter;
+    }
+
+    function updateScoreUI() {
+      UI.youScore.textContent = `You: ${state.you.score}`;
+      UI.cpuScore.textContent = `CPU: ${state.cpu.score}`;
+      UI.status.textContent = `First to ${state.winScore} wins`;
+    }
+
+    function resetRally() {
+      state.awaitingServe = true;
+
+      ball.x = W / 2;
+      ball.y = H / 2;
+      ball.speed = ballCfg.baseSpeed;
+      ball.vx = 0;
+      ball.vy = 0;
+
+      youPaddle.y = (H - paddle.h) / 2;
+      cpuPaddle.y = (H - paddle.h) / 2;
+      youPaddle.vy = 0;
+      cpuPaddle.vy = 0;
+
+      // Serve always from you toward CPU
+      state.serveDir = 1;
+      ball.x = youPaddle.x + paddle.w + ballCfg.r + 2;
+      ball.y = youPaddle.y + paddle.h / 2;
+    }
+
+    function resetMatch(keepSettings = true) {
+      state.you.score = 0;
+      state.cpu.score = 0;
+      if (!keepSettings) {
+        state.winScore = 7;
+        UI.winPoints.value = 7;
+        UI.difficulty.value = "normal";
+        setDifficulty("normal");
+      }
+      updateScoreUI();
+      UI.msg.innerHTML = `Press <kbd>Space</kbd> to serve.`;
+      resetRally();
+    }
+
+    function serve() {
+      if (!state.awaitingServe) return;
+      state.awaitingServe = false;
+
+      const angle = (Math.random() * 0.7 - 0.35);
+      ball.speed = ballCfg.baseSpeed;
+      ball.vx = Math.cos(angle) * ball.speed * state.serveDir;
+      ball.vy = Math.sin(angle) * ball.speed;
+
+      UI.msg.textContent = `Rally!`;
+    }
+
+    function endIfWin() {
+      if (state.you.score >= state.winScore) {
+        UI.msg.innerHTML = `You win! Press <kbd>R</kbd> to play again.`;
+        resetRally();
+        state.awaitingServe = true;
+        return true;
+      }
+      if (state.cpu.score >= state.winScore) {
+        UI.msg.innerHTML = `CPU wins. Press <kbd>R</kbd> to try again.`;
+        resetRally();
+        state.awaitingServe = true;
+        return true;
+      }
+      return false;
+    }
+
+    function aabbBallPaddleCollide(p) {
+      const rx = p.x, ry = p.y, rw = paddle.w, rh = paddle.h;
+      const bx = ball.x - ballCfg.r, by = ball.y - ballCfg.r, bw = ballCfg.r * 2, bh = ballCfg.r * 2;
+      return bx < rx + rw && bx + bw > rx && by < ry + rh && by + bh > ry;
+    }
+
+    function reflectFromPaddle(p) {
+      const paddleCenter = p.y + paddle.h / 2;
+      const offset = (ball.y - paddleCenter) / (paddle.h / 2);
+      const clamped = clamp(offset, -1, 1);
+
+      const paddleMove = p.vy;
+      const spin = clamped * ballCfg.spinFactor + paddleMove * 0.25;
+
+      ball.speed = clamp(ball.speed + ballCfg.accelPerHit, ballCfg.baseSpeed, ballCfg.maxSpeed);
+
+      const dirX = (ball.vx > 0) ? -1 : 1;
+      const newVx = dirX * Math.max(220, Math.abs(ball.vx));
+      let newVy = ball.vy + spin;
+
+      const mag = Math.hypot(newVx, newVy) || 1;
+      ball.vx = (newVx / mag) * ball.speed;
+      ball.vy = (newVy / mag) * ball.speed;
+
+      if (dirX > 0) ball.x = p.x + paddle.w + ballCfg.r + 0.5;
+      else ball.x = p.x - ballCfg.r - 0.5;
+    }
+
+    function updateYou(dt) {
+      youPaddle.lastY = youPaddle.y;
+
+      let dir = 0;
+      if (state.keys.has("ArrowUp") || state.keys.has("KeyW")) dir -= 1;
+      if (state.keys.has("ArrowDown") || state.keys.has("KeyS")) dir += 1;
+
+      youPaddle.vy = dir * paddle.speed;
+      youPaddle.y += youPaddle.vy * dt;
+      youPaddle.y = clamp(youPaddle.y, 10, H - paddle.h - 10);
+
+      if (state.awaitingServe) {
+        ball.y = clamp(youPaddle.y + paddle.h / 2, ballCfg.r + 10, H - ballCfg.r - 10);
+        ball.x = youPaddle.x + paddle.w + ballCfg.r + 2;
+      }
+    }
+
+    function predictBallYAtX(targetX) {
+      let px = ball.x, py = ball.y;
+      let vx = ball.vx, vy = ball.vy;
+      if (vx === 0) return H / 2;
+
+      const t = (targetX - px) / vx;
+      if (t < 0) return py;
+
+      let y = py + vy * t;
+
+      const top = 10 + ballCfg.r;
+      const bottom = H - 10 - ballCfg.r;
+      const span = bottom - top;
+
+      let m = (y - top) % (2 * span);
+      if (m < 0) m += 2 * span;
+      const reflected = (m <= span) ? m : (2 * span - m);
+      return top + reflected;
+    }
+
+    function updateCPU(dt) {
+      cpuPaddle.lastY = cpuPaddle.y;
+
+      const ballComing = ball.vx > 0 && !state.awaitingServe;
+      const centerTarget = (H - paddle.h) / 2;
+
+      let targetY;
+      if (ballComing) {
+        const predictedY = predictBallYAtX(cpuPaddle.x);
+        const blended = predictedY * (1 - cpuPaddle.aimBias) + (H / 2) * cpuPaddle.aimBias;
+        targetY = blended - paddle.h / 2;
+      } else {
+        targetY = centerTarget;
+      }
+
+      targetY += (Math.random() - 0.5) * cpuPaddle.jitter;
+
+      const dy = targetY - cpuPaddle.y;
+      const desiredVy = dy / Math.max(cpuPaddle.reaction, 0.001);
+
+      cpuPaddle.vy = clamp(desiredVy, -cpuPaddle.maxSpeed, cpuPaddle.maxSpeed);
+      cpuPaddle.y += cpuPaddle.vy * dt;
+      cpuPaddle.y = clamp(cpuPaddle.y, 10, H - paddle.h - 10);
+    }
+
+    function updateBall(dt) {
+      if (state.awaitingServe) return;
+
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      const top = 10 + ballCfg.r;
+      const bottom = H - 10 - ballCfg.r;
+
+      if (ball.y <= top) { ball.y = top; ball.vy *= -1; }
+      else if (ball.y >= bottom) { ball.y = bottom; ball.vy *= -1; }
+
+      const youRect = { x: youPaddle.x, y: youPaddle.y, vy: youPaddle.vy };
+      const cpuRect = { x: cpuPaddle.x, y: cpuPaddle.y, vy: cpuPaddle.vy };
+
+      if (aabbBallPaddleCollide(youRect) && ball.vx < 0) reflectFromPaddle(youRect);
+      if (aabbBallPaddleCollide(cpuRect) && ball.vx > 0) reflectFromPaddle(cpuRect);
+
+      if (ball.x < -50) {
+        state.cpu.score += 1;
+        updateScoreUI();
+        if (!endIfWin()) {
+          UI.msg.innerHTML = `CPU scores. Press <kbd>Space</kbd> to serve.`;
+          resetRally();
+        }
+      } else if (ball.x > W + 50) {
+        state.you.score += 1;
+        updateScoreUI();
+        if (!endIfWin()) {
+          UI.msg.innerHTML = `You score! Press <kbd>Space</kbd> to serve.`;
+          resetRally();
+        }
+      }
+    }
+
+    function drawBackground() {
+      // Green playground base
+      ctx.fillStyle = COLORS.field;
+      ctx.fillRect(0, 0, W, H);
+
+      // Image overlay (if loaded)
+      if (bgReady) {
+        ctx.save();
+        ctx.globalAlpha = 0.22; // subtle, so gameplay is still readable
+        // cover-fit
+        const iw = bgImg.naturalWidth || 1;
+        const ih = bgImg.naturalHeight || 1;
+        const scale = Math.max(W / iw, H / ih);
+        const dw = iw * scale;
+        const dh = ih * scale;
+        const dx = (W - dw) / 2;
+        const dy = (H - dh) / 2;
+        ctx.drawImage(bgImg, dx, dy, dw, dh);
+        ctx.restore();
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      // Background first
+      drawBackground();
+
+      // Center dashed line (kept visible)
+      ctx.save();
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = "#ffffff";
+      for (let y = 18; y < H - 18; y += 22) ctx.fillRect(W/2 - 2, y, 4, 12);
+      ctx.restore();
+
+      // Top/bottom boundary lines
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 8, W, 2);
+      ctx.fillRect(0, H - 10, W, 2);
+      ctx.restore();
+
+      // Paddles (yellow)
+      ctx.fillStyle = COLORS.paddle;
+      ctx.fillRect(youPaddle.x, youPaddle.y, paddle.w, paddle.h);
+      ctx.fillRect(cpuPaddle.x, cpuPaddle.y, paddle.w, paddle.h);
+
+      // Ball (white)
+      ctx.fillStyle = COLORS.ball;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ballCfg.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Small status
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+      ctx.fillStyle = "#ffffff";
+      const s = state.awaitingServe ? "READY" : (state.running ? "PLAY" : "PAUSE");
+      ctx.fillText(`Speed: ${Math.round(ball.speed)} • ${s}`, 14, H - 16);
+      ctx.restore();
+
+      // Paused overlay
+      if (!state.running) {
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, W, H);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "600 36px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("PAUSED", W/2, H/2 - 10);
+        ctx.font = "16px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+        ctx.fillText("Press Space to resume", W/2, H/2 + 24);
+        ctx.restore();
+      }
+    }
+
+    function loop(now) {
+      const rawDt = (now - state.lastTime) / 1000;
+      const dt = Math.min(rawDt, DT_CAP);
+      state.lastTime = now;
+
+      if (state.running) {
+        updateYou(dt);
+        updateCPU(dt);
+        updateBall(dt);
+      }
+
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // ====== UI wiring ======
+    function applySettings({ resetScores = true } = {}) {
+      const level = UI.difficulty.value;
+      setDifficulty(level);
+
+      let pts = parseInt(UI.winPoints.value, 10);
+      if (!Number.isFinite(pts) || pts < 1) pts = 1;
+      if (pts > 99) pts = 99;
+      state.winScore = pts;
+      UI.winPoints.value = pts;
+
+      if (resetScores) {
+        state.you.score = 0;
+        state.cpu.score = 0;
+      }
+      updateScoreUI();
+
+      UI.msg.innerHTML = `Settings applied (${level}, first to ${state.winScore}). Press <kbd>Space</kbd> to serve.`;
+      resetRally();
+    }
+
+    UI.apply.addEventListener("click", () => applySettings({ resetScores: true }));
+
+    UI.toggle.addEventListener("click", () => {
+      state.running = !state.running;
+      UI.toggle.textContent = state.running ? "Pause" : "Resume";
+      if (!state.running) UI.msg.innerHTML = `Paused. Press <kbd>Space</kbd> or click Resume.`;
+      else UI.msg.textContent = state.awaitingServe ? "Press Space to serve." : "Rally!";
+    });
+
+    UI.winPoints.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") applySettings({ resetScores: true });
+    });
+
+    UI.difficulty.addEventListener("change", () => applySettings({ resetScores: true }));
+
+    // ====== Input ======
+    window.addEventListener("keydown", (e) => {
+      if (["ArrowUp","ArrowDown","Space"].includes(e.code)) e.preventDefault();
+      state.keys.add(e.code);
+
+      if (e.code === "Space") {
+        if (!state.running) {
+          state.running = true;
+          UI.toggle.textContent = "Pause";
+          UI.msg.textContent = state.awaitingServe ? "Press Space to serve." : "Rally!";
+          return;
+        }
+        if (state.awaitingServe) serve();
+        else {
+          state.running = false;
+          UI.toggle.textContent = "Resume";
+          UI.msg.innerHTML = `Paused. Press <kbd>Space</kbd> to resume.`;
+        }
+      }
+
+      if (e.code === "KeyR") {
+        resetMatch(true);
+      }
+    }, { passive: false });
+
+    window.addEventListener("keyup", (e) => {
+      state.keys.delete(e.code);
+    });
+
+    // ====== Start ======
+    setDifficulty(UI.difficulty.value);
+    state.winScore = parseInt(UI.winPoints.value, 10) || 7;
+    updateScoreUI();
+    resetRally();
+    requestAnimationFrame((t) => { state.lastTime = t; loop(t); });
+  </script>
+</body>
+</html>
